@@ -1,0 +1,5 @@
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Infrastructure\obj\Debug\net10.0\CodebaseRAG.Infrastructure.csproj.AssemblyReference.cache
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Infrastructure\obj\Debug\net10.0\CodebaseRAG.Infrastructure.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Infrastructure\obj\Debug\net10.0\CodebaseRAG.Infrastructure.AssemblyInfoInputs.cache
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Infrastructure\obj\Debug\net10.0\CodebaseRAG.Infrastructure.AssemblyInfo.cs
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Infrastructure\obj\Debug\net10.0\CodebaseRAG.Infrastructure.csproj.CoreCompileInputs.cache

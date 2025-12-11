@@ -1,0 +1,116 @@
+[
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.ChatController",
+    "Method": "Chat",
+    "RelativePath": "api/Chat",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "CodebaseRAG.Api.Controllers.ChatRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.ChatController",
+    "Method": "TestChat",
+    "RelativePath": "api/Chat/test",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.HealthController",
+    "Method": "GeneralHealth",
+    "RelativePath": "api/Health",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.HealthController",
+    "Method": "CheckOllamaHealth",
+    "RelativePath": "api/Health/ollama",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.IndexingController",
+    "Method": "GetIndexedFiles",
+    "RelativePath": "api/Indexing/files",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "rootPath",
+        "Type": "System.String",
+        "IsRequired": false
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.IndexingController",
+    "Method": "RebuildIndex",
+    "RelativePath": "api/Indexing/rebuild",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "CodebaseRAG.Api.Controllers.IndexRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.IndexingController",
+    "Method": "RebuildSolutionIndex",
+    "RelativePath": "api/Indexing/rebuild-solution",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.IndexingController",
+    "Method": "GetStatus",
+    "RelativePath": "api/Indexing/status",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "CodebaseRAG.Api.Controllers.IndexingController",
+    "Method": "TriggerIndexing",
+    "RelativePath": "api/Indexing/trigger",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "request",
+        "Type": "CodebaseRAG.Api.Controllers.IndexRequest",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  }
+]

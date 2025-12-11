@@ -1,0 +1,11 @@
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\bin\Debug\net10.0\CodebaseRAG.Core.deps.json
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\bin\Debug\net10.0\CodebaseRAG.Core.dll
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\bin\Debug\net10.0\CodebaseRAG.Core.pdb
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.AssemblyInfoInputs.cache
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.AssemblyInfo.cs
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.csproj.CoreCompileInputs.cache
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.dll
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\refint\CodebaseRAG.Core.dll
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\CodebaseRAG.Core.pdb
+C:\Users\Home\Desktop\CodebaseReader\CodebaseRAG.Core\obj\Debug\net10.0\ref\CodebaseRAG.Core.dll
