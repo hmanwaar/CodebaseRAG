@@ -34,6 +34,7 @@ CodebaseRAG/
 - .NET 8.0 SDK or later
 - Node.js (for frontend components)
 - PostgreSQL (for vector database storage)
+- Ollama with codellama:7b
 
 ### Installation
 
