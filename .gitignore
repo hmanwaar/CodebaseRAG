@@ -1,0 +1,57 @@
+# Ignore node_modules folder
+node_modules/
+
+# Ignore .vs folder (Visual Studio)
+.vs/
+
+# Ignore bin and obj folders (Visual Studio build output)
+bin/
+obj/
+
+# Ignore user-specific files
+*.user
+*.userosscache
+*.sln.docstates
+
+# Ignore build result files
+*.[Dd]ll
+*.exe
+*.pdb
+*.cache
+*.ilk
+*.lib
+
+# Ignore environment files
+.env
+.env.local
+.env.*.local
+
+# Ignore IDE-specific files
+.idea/
+.vscode/
+*.suo
+*.opensdf
+*.sdf
+
+# Ignore NuGet packages
+packages/
+
+# Ignore test results
+TestResults/
+coverage/
+
+# Ignore temporary files
+*.tmp
+*.bak
+*.swp
+
+# Ignore log files
+*.log
+
+# Ignore OS generated files
+.DS_Store
+.DS_Store?
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
