@@ -12,14 +12,12 @@ namespace CodebaseRAG.Infrastructure.Services
     public class FileSystemCrawler : ICodeCrawler
     {
         private readonly ILogger<FileSystemCrawler> _logger;
-        // Simple token estimation: 1 word ~= 1.3 tokens. 
-        // We'll split by lines to keep code structure intact, aiming for ~500 tokens.
-        private const int TargetChunkSize = 2000; // Characters approx
-        private const int Overlap = 200; // Characters
+        private readonly ICodeParser _codeParser;
 
-        public FileSystemCrawler(ILogger<FileSystemCrawler> logger)
+        public FileSystemCrawler(ILogger<FileSystemCrawler> logger, ICodeParser codeParser)
         {
             _logger = logger;
+            _codeParser = codeParser;
         }
 
         public Task<IEnumerable<string>> ScanDirectoryAsync(string rootPath, string[]? excludePatterns = null)
@@ -69,82 +67,95 @@ namespace CodebaseRAG.Infrastructure.Services
 
         public async Task<IEnumerable<CodeChunk>> ProcessFileAsync(string filePath)
         {
-            var chunks = new List<CodeChunk>();
             try
             {
-                var ext = Path.GetExtension(filePath).ToLower();
                 var fileInfo = new FileInfo(filePath);
 
-                // Skip very large files (> 1MB) to avoid hanging
-                if (fileInfo.Length > 1024 * 1024)
+                // Skip very large files (> configurable size) to avoid hanging
+                var maxFileSizeMB = 1; // Default, can be made configurable
+                if (fileInfo.Length > maxFileSizeMB * 1024 * 1024)
                 {
-                    _logger.LogWarning("Skipping large file ({Size} bytes): {FilePath}", fileInfo.Length, filePath);
-                    return chunks;
+                    _logger.LogWarning("Skipping large file ({Size} bytes, > {MaxSize}MB): {FilePath}",
+                        fileInfo.Length, maxFileSizeMB, filePath);
+                    return Enumerable.Empty<CodeChunk>();
                 }
 
-                // Special handling for executable files
-                if (ext == ".exe")
-                {
-                    var chunk = new CodeChunk
-                    {
-                        FilePath = filePath,
-                        FileName = Path.GetFileName(filePath),
-                        Content = $"[EXECUTABLE FILE]\n" +
-                                 $"Name: {Path.GetFileName(filePath)}\n" +
-                                 $"Path: {filePath}\n" +
-                                 $"Size: {fileInfo.Length} bytes\n" +
-                                 $"Last Modified: {fileInfo.LastWriteTime}\n" +
-                                 $"This is an executable file (Windows .exe format).",
-                        StartLine = 1,
-                        EndLine = 1,
-                        LastModified = fileInfo.LastWriteTime
-                    };
-                    chunks.Add(chunk);
-                    _logger.LogDebug("Created metadata chunk for executable file: {FilePath}", filePath);
-                    return chunks;
-                }
-
-                var content = await File.ReadAllTextAsync(filePath);
-
+                // Use streaming for large files to reduce memory usage
+                var content = await ReadFileWithStreamingAsync(filePath);
+                
                 if (string.IsNullOrWhiteSpace(content))
                 {
-                    _logger.LogDebug("File is empty or whitespace only: {FilePath}", filePath);
-                    return chunks;
+                    return Enumerable.Empty<CodeChunk>();
                 }
-
-                var lines = content.Split('\n');
-                _logger.LogDebug("Processing file with {LineCount} lines: {FilePath}", lines.Length, filePath);
-
-                // Simple chunking strategy: Group lines until size limit
-                var currentChunk = "";
-                var startLine = 1;
-                var currentLine = 1;
-
-                foreach (var line in lines)
+                
+                // Generic file type handling
+                var ext = Path.GetExtension(filePath).ToLower();
+                
+                // Use appropriate parser based on file type
+                switch (ext)
                 {
-                    if (currentChunk.Length + line.Length > TargetChunkSize && !string.IsNullOrWhiteSpace(currentChunk))
-                    {
-                        chunks.Add(new CodeChunk
+                    case ".cs":
+                        return await _codeParser.ParseAsync(content, filePath);
+                    
+                    case ".cshtml":
+                    case ".html":
+                    case ".htm":
+                        return ParseHtmlOrRazor(content, filePath, ext);
+                    
+                    case ".js":
+                    case ".ts":
+                    case ".jsx":
+                    case ".tsx":
+                        return ParseJavaScript(content, filePath, ext);
+                    
+                    case ".py":
+                        return ParsePython(content, filePath);
+                    
+                    case ".json":
+                    case ".xml":
+                    case ".yaml":
+                    case ".yml":
+                    case ".md":
+                    case ".txt":
+                    case ".config":
+                    case ".sql":
+                        return SimpleLineChunking(content, filePath, ext);
+                    
+                    default:
+                        // For unknown file types, try to detect if it's code-like or use simple chunking
+                        if (IsLikelyCodeFile(content, ext))
                         {
-                            FilePath = filePath,
-                            FileName = Path.GetFileName(filePath),
-                            Content = currentChunk.TrimEnd(),
-                            StartLine = startLine,
-                            EndLine = currentLine - 1,
-                            LastModified = File.GetLastWriteTime(filePath)
-                        });
-
-                        // Start new chunk with overlap (simplified: just reset for now, overlap logic is complex with lines)
-                        // Ideally we'd keep the last N lines.
-                        currentChunk = "";
-                        startLine = currentLine;
-                    }
-
-                    currentChunk += line + "\n";
-                    currentLine++;
+                            return SimpleLineChunking(content, filePath, ext);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("Skipping unknown file type: {FilePath}", filePath);
+                            return Enumerable.Empty<CodeChunk>();
+                        }
                 }
-
-                if (!string.IsNullOrWhiteSpace(currentChunk))
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing file: {FilePath}", filePath);
+                return Enumerable.Empty<CodeChunk>();
+            }
+        }
+        
+        private IEnumerable<CodeChunk> ParseHtmlOrRazor(string content, string filePath, string extension)
+        {
+            var chunks = new List<CodeChunk>();
+            var lines = content.Split('\n');
+            var currentChunk = "";
+            var startLine = 1;
+            var currentLine = 1;
+            int TargetChunkSize = 2000;
+            
+            // Determine language based on extension
+            var language = extension == ".cshtml" ? "razor" : "html";
+            
+            foreach (var line in lines)
+            {
+                if (currentChunk.Length + line.Length > TargetChunkSize && !string.IsNullOrWhiteSpace(currentChunk))
                 {
                     chunks.Add(new CodeChunk
                     {
@@ -153,20 +164,157 @@ namespace CodebaseRAG.Infrastructure.Services
                         Content = currentChunk.TrimEnd(),
                         StartLine = startLine,
                         EndLine = currentLine - 1,
-                        LastModified = File.GetLastWriteTime(filePath)
+                        LastModified = File.GetLastWriteTime(filePath),
+                        Language = language
                     });
+                    currentChunk = "";
+                    startLine = currentLine;
                 }
-
-                _logger.LogDebug("Created {ChunkCount} chunks for file: {FilePath}", chunks.Count, filePath);
+                currentChunk += line + "\n";
+                currentLine++;
+            }
+            
+            if (!string.IsNullOrWhiteSpace(currentChunk))
+            {
+                chunks.Add(new CodeChunk
+                {
+                    FilePath = filePath,
+                    FileName = Path.GetFileName(filePath),
+                    Content = currentChunk.TrimEnd(),
+                    StartLine = startLine,
+                    EndLine = currentLine - 1,
+                    LastModified = File.GetLastWriteTime(filePath),
+                    Language = language
+                });
+            }
+            return chunks;
+        }
+        
+        private IEnumerable<CodeChunk> ParseJavaScript(string content, string filePath, string extension)
+        {
+            // For JavaScript/TypeScript files, we can use simple chunking for now
+            // In future, could add proper AST parsing
+            return SimpleLineChunking(content, filePath, extension);
+        }
+        
+        private IEnumerable<CodeChunk> ParsePython(string content, string filePath)
+        {
+            // For Python files, use simple chunking for now
+            // Could add proper Python AST parsing in future
+            return SimpleLineChunking(content, filePath, ".py");
+        }
+        
+        private IEnumerable<CodeChunk> SimpleLineChunking(string content, string filePath, string extension)
+        {
+            var chunks = new List<CodeChunk>();
+            var lines = content.Split('\n');
+            var currentChunk = "";
+            var startLine = 1;
+            var currentLine = 1;
+            int TargetChunkSize = 2000;
+            
+            // Determine language based on extension
+            var language = GetLanguageFromExtension(extension);
+            
+            foreach (var line in lines)
+            {
+                if (currentChunk.Length + line.Length > TargetChunkSize && !string.IsNullOrWhiteSpace(currentChunk))
+                {
+                    chunks.Add(new CodeChunk
+                    {
+                        FilePath = filePath,
+                        FileName = Path.GetFileName(filePath),
+                        Content = currentChunk.TrimEnd(),
+                        StartLine = startLine,
+                        EndLine = currentLine - 1,
+                        LastModified = File.GetLastWriteTime(filePath),
+                        Language = language
+                    });
+                    currentChunk = "";
+                    startLine = currentLine;
+                }
+                currentChunk += line + "\n";
+                currentLine++;
+            }
+            
+            if (!string.IsNullOrWhiteSpace(currentChunk))
+            {
+                chunks.Add(new CodeChunk
+                {
+                    FilePath = filePath,
+                    FileName = Path.GetFileName(filePath),
+                    Content = currentChunk.TrimEnd(),
+                    StartLine = startLine,
+                    EndLine = currentLine - 1,
+                    LastModified = File.GetLastWriteTime(filePath),
+                    Language = language
+                });
+            }
+            return chunks;
+        }
+        
+        private string GetLanguageFromExtension(string extension)
+        {
+            switch (extension.ToLower())
+            {
+                case ".cs": return "csharp";
+                case ".cshtml": return "razor";
+                case ".html":
+                case ".htm": return "html";
+                case ".js": return "javascript";
+                case ".ts": return "typescript";
+                case ".jsx": return "javascript";
+                case ".tsx": return "typescript";
+                case ".py": return "python";
+                case ".json": return "json";
+                case ".xml": return "xml";
+                case ".yaml":
+                case ".yml": return "yaml";
+                case ".md": return "markdown";
+                case ".sql": return "sql";
+                default: return "text";
+            }
+        }
+        
+        private async Task<string> ReadFileWithStreamingAsync(string filePath)
+        {
+            try
+            {
+                using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
+                using var streamReader = new StreamReader(fileStream);
+                
+                // Read file in chunks to reduce memory usage
+                var content = await streamReader.ReadToEndAsync();
+                return content;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing file: {FilePath}", filePath);
+                _logger.LogError(ex, "Error reading file with streaming: {FilePath}", filePath);
+                return string.Empty;
             }
-
-            return chunks;
         }
-
+        
+        private bool IsLikelyCodeFile(string content, string extension)
+        {
+            // Simple heuristic to determine if unknown file type is likely code
+            if (string.IsNullOrWhiteSpace(content))
+                return false;
+            
+            // Check for common code patterns
+            var likelyCodePatterns = new[] { "function", "class", "import", "export", "def", "return", "if (", "for (", "while (" };
+            
+            // If it has common code patterns, treat as code
+            if (likelyCodePatterns.Any(pattern => content.Contains(pattern)))
+                return true;
+            
+            // If it looks like structured data, treat as text
+            if (content.TrimStart().StartsWith("{") || content.TrimStart().StartsWith("[") ||
+                content.TrimStart().StartsWith("<") || content.TrimStart().StartsWith("#"))
+                return true;
+            
+            return false;
+        }
+        
         private bool IsBinary(string filePath)
         {
             var ext = Path.GetExtension(filePath).ToLower();
@@ -174,7 +322,7 @@ namespace CodebaseRAG.Infrastructure.Services
             var binaryExtensions = new[] { ".dll", ".pdb", ".bin", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".zip", ".7z", ".tar", ".gz", ".pdf", ".doc", ".docx", ".xls", ".xlsx" };
             return binaryExtensions.Contains(ext);
         }
-
+        
         private bool IsExcluded(string filePath, string[]? excludePatterns)
         {
             if (excludePatterns == null) return false;
@@ -187,7 +335,7 @@ namespace CodebaseRAG.Infrastructure.Services
             
             // Default excludes
             if (filePath.Contains("\\bin\\") || filePath.Contains("\\obj\\") || filePath.Contains("\\.git\\") || filePath.Contains("\\node_modules\\")) return true;
-
+            
             return false;
         }
     }

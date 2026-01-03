@@ -32,7 +32,13 @@ builder.Services.AddSwaggerGen();
 
 // Core Services
 builder.Services.AddSingleton<IVectorDbService, InMemoryVectorDb>();
-builder.Services.AddTransient<ICodeCrawler, FileSystemCrawler>();
+builder.Services.AddTransient<ICodeParser, RoslynCodeParser>();
+builder.Services.AddTransient<FileSystemCrawler>();
+builder.Services.AddTransient<ICodeCrawler>(sp => sp.GetRequiredService<FileSystemCrawler>());
+builder.Services.AddTransient<SqlDatabaseCrawler>();
+builder.Services.AddTransient<DatabaseSchemaExtractor>();
+builder.Services.AddTransient<ProjectTypeDetector>();
+builder.Services.AddTransient<CrawlerFactory>();
 
 // Infrastructure Services - Simplified HTTP client configuration
 builder.Services.AddHttpClient<OllamaService>(client =>
@@ -45,13 +51,20 @@ builder.Services.AddTransient<IEmbeddingService>(sp => sp.GetRequiredService<Oll
 builder.Services.AddTransient<OllamaService>(); // Register concrete type for Orchestrator
 
 // Orchestration
-builder.Services.AddSingleton<IndexingService>();
+builder.Services.AddSingleton<IndexingService>(sp => new IndexingService(
+    sp.GetRequiredService<CrawlerFactory>(),
+    sp.GetRequiredService<IEmbeddingService>(),
+    sp.GetRequiredService<IVectorDbService>(),
+    sp.GetRequiredService<TextRepository>(),
+    sp.GetRequiredService<ILogger<IndexingService>>(),
+    builder.Configuration
+));
 builder.Services.AddTransient<RAGOrchestrator>();
 
 // RAG Services
-builder.Services.AddSingleton<TextRepository>(sp => 
+builder.Services.AddSingleton<TextRepository>(sp =>
     new TextRepository(
-        builder.Configuration.GetConnectionString("PostgreSQL") ?? throw new InvalidOperationException("PostgreSQL connection string is missing."), 
+        sp.GetRequiredService<IVectorDbService>(),
         sp.GetRequiredService<IEmbeddingService>()
     ));
 builder.Services.AddHttpClient<RagService>();
@@ -69,7 +82,12 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
+bool isDevelopment = app.Environment.IsDevelopment();
+#if DEBUG
+    isDevelopment = true;
+#endif
+
+if (isDevelopment)
 {
     app.UseSwagger();
     app.UseSwaggerUI();
@@ -88,7 +106,17 @@ app.MapPost("/add-text", async (TextRepository textRepository, [FromBody] AddTex
     {
         return Results.BadRequest("Content is required.");
     }
-    await textRepository.StoreTextAsync(request.Content);
+    
+    // Create a dummy chunk for raw text
+    var chunk = new CodebaseRAG.Core.Models.CodeChunk 
+    { 
+        Content = request.Content,
+        FileName = "ManualEntry",
+        FilePath = "ManualEntry",
+        Language = "text"
+    };
+
+    await textRepository.StoreTextAsync(chunk);
     return Results.Ok("Text added successfully.");
 });
 

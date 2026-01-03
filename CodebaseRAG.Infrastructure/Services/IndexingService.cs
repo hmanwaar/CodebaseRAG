@@ -1,32 +1,48 @@
 using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using CodebaseRAG.Core.Interfaces;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace CodebaseRAG.Infrastructure.Services
 {
     public class IndexingService
     {
-        private readonly ICodeCrawler _crawler;
+        private readonly CrawlerFactory _crawlerFactory;
         private readonly IEmbeddingService _embeddingService;
         private readonly IVectorDbService _vectorDb;
         private readonly ILogger<IndexingService> _logger;
+        private readonly CodebaseRAG.Infrastructure.Repositories.TextRepository _repository;
         private CancellationTokenSource? _cts;
+        private readonly int _maxParallelism;
+        private readonly int _embeddingBatchSize;
 
         public IndexingStatus Status { get; private set; } = new();
 
         public IndexingService(
-            ICodeCrawler crawler,
+            CrawlerFactory crawlerFactory,
             IEmbeddingService embeddingService,
             IVectorDbService vectorDb,
-            ILogger<IndexingService> logger)
+            CodebaseRAG.Infrastructure.Repositories.TextRepository repository,
+            ILogger<IndexingService> logger,
+            IConfiguration configuration)
         {
-            _crawler = crawler;
+            _crawlerFactory = crawlerFactory;
             _embeddingService = embeddingService;
             _vectorDb = vectorDb;
+            _repository = repository;
             _logger = logger;
+            
+            // Configuration for parallelism and batching
+            _maxParallelism = configuration.GetValue<int>("Indexing:MaxParallelism", Environment.ProcessorCount);
+            _embeddingBatchSize = configuration.GetValue<int>("Indexing:EmbeddingBatchSize", 50);
+            
+            _logger.LogInformation("IndexingService configured with MaxParallelism: {MaxParallelism}, EmbeddingBatchSize: {BatchSize}",
+                _maxParallelism, _embeddingBatchSize);
         }
 
         public void StartIndexing(string rootPath, string[]? excludePatterns = null)
@@ -67,64 +83,143 @@ namespace CodebaseRAG.Infrastructure.Services
                 return;
             }
 
-            try 
+            try
             {
-                var files = await _crawler.ScanDirectoryAsync(rootPath, excludePatterns);
+                // Create project-type specific crawler
+                var crawler = _crawlerFactory.CreateCrawler(rootPath);
+                
+                var files = await crawler.ScanDirectoryAsync(rootPath, excludePatterns);
                 var fileList = files.ToList();
                 Status.TotalFiles = fileList.Count;
                 Status.Message = $"Found {Status.TotalFiles} files. Starting processing...";
                 _logger.LogInformation("Found {Count} files", Status.TotalFiles);
 
-                int processedCount = 0;
-                foreach (var file in fileList)
+                // Use concurrent collection for thread-safe processing
+                var chunksToEmbed = new ConcurrentBag<CodebaseRAG.Core.Models.CodeChunk>();
+                var filesProcessed = new ConcurrentDictionary<string, bool>();
+                
+                // Parallel options with limited concurrency
+                var parallelOptions = new ParallelOptions
                 {
-                    if (token.IsCancellationRequested)
+                    MaxDegreeOfParallelism = _maxParallelism,
+                    CancellationToken = token
+                };
+
+                // Process files in parallel
+                await Parallel.ForEachAsync(fileList, parallelOptions, async (file, cancellationToken) =>
+                {
+                    if (cancellationToken.IsCancellationRequested)
                     {
-                        Status.Message = "Indexing cancelled by user.";
-                        Status.IsIndexing = false;
-                        Status.CurrentFile = "";
-                         _logger.LogInformation("Indexing cancelled.");
                         return;
                     }
 
                     Status.CurrentFile = file;
-                    Status.Message = $"Processing {processedCount + 1}/{Status.TotalFiles}: {System.IO.Path.GetFileName(file)}";
+                    Status.Message = $"Processing {filesProcessed.Count + 1}/{Status.TotalFiles}: {System.IO.Path.GetFileName(file)}";
                     
                     try 
                     {
-                        // Pass token if crawler supports it, otherwise just check before/after
-                        if (token.IsCancellationRequested) break;
+                        // INCREMENTAL INDEXING CHECK
+                        var fileInfo = new System.IO.FileInfo(file);
+                        var lastModLocal = fileInfo.LastWriteTimeUtc; // Use UTC
+                        DateTime? lastModRemote = null;
+                        try
+                        {
+                            lastModRemote = await _repository.GetLastModifiedAsync(file);
+                        }
+                        catch (Exception lastModEx)
+                        {
+                            Console.WriteLine($"[IndexingService] Warning: Failed to check remote modification time for {file}: {lastModEx.Message}");
+                        }
 
-                        var chunks = await _crawler.ProcessFileAsync(file);
+                        // If remote exists and local is not newer, skip
+                        if (lastModRemote.HasValue && lastModLocal <= lastModRemote.Value)
+                        {
+                            _logger.LogDebug("Skipping unmodified file: {File}", file);
+                            filesProcessed.TryAdd(file, true);
+                            Status.ProcessedFiles = filesProcessed.Count;
+                            return;
+                        }
+
+                        // If we are here, file is new or modified. Delete old chunks if modified
+                        if (lastModRemote.HasValue)
+                        {
+                            await _repository.DeleteFileChunksAsync(file);
+                            _logger.LogInformation("Re-indexing modified file: {File}", file);
+                        }
+
+                        var chunks = await crawler.ProcessFileAsync(file);
+                        
+                        // Add file timestamp to each chunk
                         foreach (var chunk in chunks)
                         {
-                            if (token.IsCancellationRequested) break;
-                            chunk.Embedding = await _embeddingService.GenerateEmbeddingAsync(chunk.Content);
-                        }
-
-                        if (chunks.Any() && !token.IsCancellationRequested)
-                        {
-                            await _vectorDb.UpsertChunksAsync(chunks);
+                            chunk.LastModified = lastModLocal;
+                            chunksToEmbed.Add(chunk);
                         }
                         
-                        if (!token.IsCancellationRequested)
-                        {
-                            processedCount++;
-                            Status.ProcessedFiles = processedCount;
-                        }
+                        filesProcessed.TryAdd(file, true);
+                        Status.ProcessedFiles = filesProcessed.Count;
                     }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Failed to index file {File}", file);
+                    }
+                });
+
+                // Process embeddings in batches
+                if (!token.IsCancellationRequested && chunksToEmbed.Any())
+                {
+                    Status.Message = "Generating embeddings...";
+                    _logger.LogInformation("Starting embedding generation for {Count} chunks", chunksToEmbed.Count);
+                    
+                    // Convert concurrent bag to list for batching
+                    var allChunks = chunksToEmbed.ToList();
+                    
+                    // Process in batches
+                    for (int i = 0; i < allChunks.Count; i += _embeddingBatchSize)
+                    {
+                        if (token.IsCancellationRequested)
+                        {
+                            break;
+                        }
+                        
+                        var batch = allChunks.Skip(i).Take(_embeddingBatchSize).ToList();
+                        List<string> batchContents = batch.Select(c => c.Content).ToList();
+                        
+                        Status.Message = $"Generating embeddings batch {i/_embeddingBatchSize + 1}/{Math.Ceiling((double)allChunks.Count/_embeddingBatchSize)}...";
+                        
+                        try
+                        {
+                            var embeddings = await _embeddingService.GenerateEmbeddingsAsync(batchContents);
+                            
+                            // Assign embeddings back to chunks
+                            for (int j = 0; j < batch.Count; j++)
+                            {
+                                batch[j].Embedding = embeddings[j];
+                            }
+                            
+                            // Store chunks in database
+                            foreach (var chunk in batch)
+                            {
+                                await _repository.StoreTextAsync(chunk);
+                            }
+                            
+                            _logger.LogDebug("Processed batch {BatchIndex} with {BatchSize} chunks", 
+                                i/_embeddingBatchSize + 1, batch.Count);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to process embedding batch {BatchIndex}", i/_embeddingBatchSize + 1);
+                        }
                     }
                 }
 
                 if (!token.IsCancellationRequested)
                 {
                     Status.IsIndexing = false;
-                    Status.Message = $"Completed. Indexed {processedCount} files.";
+                    Status.Message = $"Completed. Indexed {filesProcessed.Count} files with {chunksToEmbed.Count} chunks.";
                     Status.CurrentFile = string.Empty;
-                    _logger.LogInformation("Indexing completed. Processed {Count} files.", processedCount);
+                    _logger.LogInformation("Indexing completed. Processed {Count} files with {ChunkCount} chunks.", 
+                        filesProcessed.Count, chunksToEmbed.Count);
                 }
             }
             catch (Exception ex)
@@ -135,7 +230,7 @@ namespace CodebaseRAG.Infrastructure.Services
             }
         }
     }
-
+    
     public class IndexingStatus
     {
         public bool IsIndexing { get; set; }

@@ -78,6 +78,24 @@ namespace CodebaseRAG.Infrastructure.Services
             }
         }
 
+        public Task<DateTime?> GetLastModifiedAsync(string filePath)
+        {
+            lock (_lock)
+            {
+                var chunk = _chunks.FirstOrDefault(c => c.FilePath == filePath);
+                return Task.FromResult(chunk?.LastModified);
+            }
+        }
+
+        public Task DeleteFileChunksAsync(string filePath)
+        {
+            lock (_lock)
+            {
+                _chunks.RemoveAll(c => c.FilePath == filePath);
+            }
+            return Task.CompletedTask;
+        }
+
         private double CosineSimilarity(float[] vectorA, float[] vectorB)
         {
             if (vectorA.Length != vectorB.Length) return 0;

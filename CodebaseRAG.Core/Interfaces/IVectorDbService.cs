@@ -11,5 +11,7 @@ namespace CodebaseRAG.Core.Interfaces
         Task<int> CountAsync();
         Task ClearAsync();
         Task<IEnumerable<string>> GetAllFilesAsync();
+        Task<DateTime?> GetLastModifiedAsync(string filePath);
+        Task DeleteFileChunksAsync(string filePath);
     }
 }

@@ -12,5 +12,11 @@ namespace CodebaseRAG.Core.Models
         public int EndLine { get; set; }
         public float[]? Embedding { get; set; }
         public DateTime LastModified { get; set; }
+        
+        // Metadata for code-aware RAG
+        public string FunctionName { get; set; } = string.Empty;
+        public string ClassName { get; set; } = string.Empty;
+        public string Language { get; set; } = string.Empty;
+        public List<string> Tags { get; set; } = new List<string>();
     }
 }

@@ -29,33 +29,46 @@ namespace CodebaseRAG.Infrastructure.Services
 
         public async Task<object> GetAnswerAsync(string query)
         {
-            // Retrieve multiple relevant texts
-            List<string> contexts = await _textRepository.RetrieveRelevantText(query);
+            // Retrieve multiple relevant chunks with metadata
+            var chunks = await _textRepository.RetrieveRelevantChunksAsync(query);
 
-            // Combine multiple contexts into one string
-            string combinedContext = string.Join("\n\n---\n\n", contexts);
-
-            // If no relevant context is found, return a strict message
-            if (contexts.Count == 1 && contexts[0] == "No relevant context found.")
+            if (!chunks.Any())
             {
-                return new
-                {
-                    Context = "No relevant data found in the database.",
-                    Response = "I don't know."
-                };
+                 return new
+                 {
+                     Context = "No relevant data found in the database.",
+                     Response = "I don't know. No relevant code found to answer your question."
+                 };
             }
+
+            // Build rich context string
+            var sb = new StringBuilder();
+            foreach (var chunk in chunks)
+            {
+                sb.AppendLine("---");
+                if (!string.IsNullOrEmpty(chunk.FileName)) sb.AppendLine($"File: {chunk.FileName}");
+                if (!string.IsNullOrEmpty(chunk.ClassName)) sb.AppendLine($"Class: {chunk.ClassName}");
+                if (!string.IsNullOrEmpty(chunk.FunctionName)) sb.AppendLine($"Method: {chunk.FunctionName}");
+                sb.AppendLine($"Lines: {chunk.StartLine}-{chunk.EndLine}");
+                sb.AppendLine("Code:");
+                sb.AppendLine(chunk.Content);
+                sb.AppendLine();
+            }
+            string combinedContext = sb.ToString();
 
             var requestBody = new
             {
                 model = _modelId,
                 prompt = $"""
-            You are a strict AI assistant. You MUST answer ONLY using the provided context. 
-            If the answer is not in the context, respond with "I don't know. No relevant data found."
-
+            You are an expert AI software engineer. Answer the user's question based strictly on the provided code snippets.
+            The snippets include metadata like File, Class, and Method names to help you understand the structure.
+            
             Context:
             {combinedContext}
 
             Question: {query}
+            
+            Answer:
             """,
                 stream = false
             };
@@ -69,7 +82,7 @@ namespace CodebaseRAG.Infrastructure.Services
                 return new
                 {
                     Context = combinedContext,
-                    Response = "Error: Unable to generate response."
+                    Response = "Error: Unable to generate response from LLM."
                 };
             }
 
@@ -80,7 +93,7 @@ namespace CodebaseRAG.Infrastructure.Services
             return new
             {
                 Context = combinedContext,
-                Response = completionResponse?.Response ?? "I don't know. No relevant data found."
+                Response = completionResponse?.Response ?? "I don't know."
             };
         }
 

@@ -1,78 +1,61 @@
 using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Threading.Tasks;
 using CodebaseRAG.Core.Interfaces;
-using Npgsql;
+using CodebaseRAG.Core.Models;
 
 namespace CodebaseRAG.Infrastructure.Repositories
 {
     public class TextRepository
     {
-        private readonly string _connectionString;
+        private readonly IVectorDbService _vectorDb;
         private readonly IEmbeddingService _embeddingService;
 
-        public TextRepository(string connectionString, IEmbeddingService embeddingService)
+        public TextRepository(IVectorDbService vectorDb, IEmbeddingService embeddingService)
         {
-            _connectionString = connectionString;
+            _vectorDb = vectorDb;
             _embeddingService = embeddingService;
         }
 
-        public async Task StoreTextAsync(string content)
+        public async Task StoreTextAsync(CodeChunk chunk)
         {
-            var embedding = await _embeddingService.GenerateEmbeddingAsync(content);
+            if (chunk.Embedding == null)
+            {
+                chunk.Embedding = await _embeddingService.GenerateEmbeddingAsync(chunk.Content);
+            }
 
-            using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync();
-
-            // Ensure table exists - simple migration for demo purposes
-            var createTableCmd = new NpgsqlCommand(@"
-                CREATE TABLE IF NOT EXISTS text_contexts (
-                    id SERIAL PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    embedding vector(384) -- Assuming default dimension for mistral/nomic-embed-text
-                );
-            ", conn);
-            await createTableCmd.ExecuteNonQueryAsync();
-
-            string query = "INSERT INTO text_contexts (content, embedding) VALUES (@content, @embedding)";
-            using var cmd = new NpgsqlCommand(query, conn);
-            cmd.Parameters.AddWithValue("content", content);
-            cmd.Parameters.AddWithValue("embedding", embedding); 
-            // NOTE: This assumes Npgsql maps float[] to vector, OR that pgvector extension allows implicit cast from float array literal.
-            // If this fails at runtime, we might need Pgvector.Npgsql package or string formatting like in retrieval. 
-
-            await cmd.ExecuteNonQueryAsync();
+            await _vectorDb.UpsertChunksAsync(new[] { chunk });
         }
 
-        public async Task<List<string>> RetrieveRelevantText(string query)
+        public async Task<List<CodeChunk>> RetrieveRelevantChunksAsync(string query, string? languageFilter = null)
         {
             var queryEmbedding = await _embeddingService.GenerateEmbeddingAsync(query);
 
-            using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync();
+            var searchResults = await _vectorDb.SearchAsync(queryEmbedding, 5);
+            var chunks = searchResults.Select(sr => sr.Chunk).ToList();
 
-            string querySql = @"
-                SELECT content 
-                FROM text_contexts 
-                WHERE embedding <-> CAST(@queryEmbedding AS vector) > 0.7 
-                ORDER BY embedding <-> CAST(@queryEmbedding AS vector) 
-                LIMIT 5";
-
-            using var cmd = new NpgsqlCommand(querySql, conn);
-
-            // User's retrieval code construction:
-            string embeddingString = $"[{string.Join(",", queryEmbedding.Select(v => v.ToString("G", CultureInfo.InvariantCulture)))}]";
-            cmd.Parameters.AddWithValue("queryEmbedding", embeddingString);
-            
-            using var reader = await cmd.ExecuteReaderAsync();
-            var results = new List<string>();
-            while (await reader.ReadAsync())
+            if (!string.IsNullOrEmpty(languageFilter))
             {
-                results.Add(reader.GetString(0));
+                chunks = chunks.Where(c => c.Language == languageFilter).ToList();
             }
 
-            return results.Any() ? results : new List<string> { "No relevant context found." };
+            return chunks;
+        }
+
+        // Kept for backward compatibility if needed, but RagService should switch to above
+        public async Task<List<string>> RetrieveRelevantText(string query, string? languageFilter = null)
+        {
+            var chunks = await RetrieveRelevantChunksAsync(query, languageFilter);
+            return chunks.Select(c => c.Content).ToList();
+        }
+
+        public async Task<DateTime?> GetLastModifiedAsync(string filePath)
+        {
+            return await _vectorDb.GetLastModifiedAsync(filePath);
+        }
+
+        public async Task DeleteFileChunksAsync(string filePath)
+        {
+            await _vectorDb.DeleteFileChunksAsync(filePath);
         }
     }
 }
